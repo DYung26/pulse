@@ -1,0 +1,19 @@
+<schemalist gettext-domain="pulse">
+  <schema id="org.gnome.shell.extensions.pulse" path="/org/gnome/shell/extensions/pulse/">
+    <key name="show-overlay-keybinding" type="as">
+      <default>['&lt;Super&gt;semicolon']</default>
+      <summary>Show Pulse overlay</summary>
+      <description>Keybinding to manually show the Pulse notes overlay.</description>
+    </key>
+    <key name="overlay-position-x" type="i">
+      <default>-1</default>
+      <summary>Overlay X position</summary>
+      <description>Persisted X position of the overlay after dragging. -1 means unset (use default top-right position).</description>
+    </key>
+    <key name="overlay-position-y" type="i">
+      <default>-1</default>
+      <summary>Overlay Y position</summary>
+      <description>Persisted Y position of the overlay after dragging. -1 means unset (use default top-right position).</description>
+    </key>
+  </schema>
+</schemalist>
