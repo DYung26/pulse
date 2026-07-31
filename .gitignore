@@ -1,0 +1,12 @@
+# Rust
+/core/target/
+**/*.rs.bk
+# Cargo.lock is intentionally committed (binary crate, reproducible builds)
+
+# Editor
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+ui-gnome/schemas/gschemas.compiled
