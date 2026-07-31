@@ -1,0 +1,36 @@
+/* Pulse overlay theme — black/white base, minimal accent color. */
+
+.pulse-overlay {
+    background-color: rgba(20, 20, 20, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 10px 14px;
+    spacing: 8px;
+    max-width: 320px;
+}
+
+.pulse-note-row {
+    spacing: 2px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pulse-note-row:last-child {
+    border-bottom: none;
+}
+
+.pulse-note-text {
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.pulse-note-properties {
+    color: #a0d8ff;
+    font-size: 11px;
+}
+
+.pulse-note-timestamp {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 10px;
+}

@@ -1,0 +1,234 @@
+// Renders the note-list overlay: a small St.Widget added to GNOME
+// Shell's chrome layer (Main.layoutManager.addChrome), positioned in
+// the top-right corner (or a persisted dragged position), showing
+// each note's text, properties, and last-updated time.
+//
+// Owns rendering, drag positioning (persisted via GSettings), and the
+// show()/hide() fade transitions. Timer/keybind trigger logic and
+// dismiss-on-click/Escape live in extension.js, which calls into this
+// through onClick()/disconnectClick() rather than reaching into
+// internals directly.
+
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+const MARGIN_FROM_EDGE = 12;
+const FADE_DURATION_MS = 250;
+const POSITION_UNSET = -1;
+
+/**
+ * Format a Note's `updated_at` (ISO 8601 string from the daemon) as a
+ * short relative "Xm ago" / "Xh ago" string, so staleness is visible
+ * at a glance without the user doing any math.
+ */
+function relativeTime(isoString) {
+    const then = new Date(isoString).getTime();
+    const now = Date.now();
+    const diffSeconds = Math.max(0, Math.floor((now - then) / 1000));
+
+    if (diffSeconds < 60)
+        return 'just now';
+    const diffMinutes = Math.floor(diffSeconds / 60);
+    if (diffMinutes < 60)
+        return `${diffMinutes}m ago`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24)
+        return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+}
+
+function buildNoteRow(note) {
+    const row = new St.BoxLayout({
+        style_class: 'pulse-note-row',
+        vertical: true,
+        x_expand: true,
+    });
+
+    const textLabel = new St.Label({
+        style_class: 'pulse-note-text',
+        text: note.text,
+    });
+    textLabel.clutter_text.line_wrap = true;
+    row.add_child(textLabel);
+
+    const propertyKeys = Object.keys(note.properties);
+    if (propertyKeys.length > 0) {
+        const propertiesText = propertyKeys
+            .map(key => `${key}: ${note.properties[key]}`)
+            .join('  ·  ');
+        const propertiesLabel = new St.Label({
+            style_class: 'pulse-note-properties',
+            text: propertiesText,
+        });
+        propertiesLabel.clutter_text.line_wrap = true;
+        row.add_child(propertiesLabel);
+    }
+
+    const timestampLabel = new St.Label({
+        style_class: 'pulse-note-timestamp',
+        text: relativeTime(note.updated_at),
+    });
+    row.add_child(timestampLabel);
+
+    return row;
+}
+
+export class PulseOverlay {
+    /**
+     * @param {Gio.Settings} settings - from Extension.getSettings(),
+     *     used to persist dragged position across sessions.
+     */
+    constructor(settings) {
+        this._settings = settings;
+
+        this._container = new St.BoxLayout({
+            style_class: 'pulse-overlay',
+            vertical: true,
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+        });
+        this._container.hide();
+
+        // Note: affectsInputRegion is a real Mutter param historically,
+        // but this GJS/GNOME version rejects it as unrecognized — drop
+        // it and rely on the two widely-used params instead.
+        Main.layoutManager.addChrome(this._container, {
+            affectsStruts: false,
+            trackFullscreen: false,
+        });
+
+        this._positionOnFirstAllocation();
+        this._setupDragging();
+    }
+
+    _positionOnFirstAllocation() {
+        // A fresh St.BoxLayout reports 0 width/height until its first
+        // layout pass, so position after allocation, not at
+        // construction time.
+        const handlerId = this._container.connect('notify::allocation', () => {
+            if (this._container.width === 0)
+                return;
+            this._applyPosition();
+            this._container.disconnect(handlerId);
+        });
+    }
+
+    _applyPosition() {
+        const savedX = this._settings.get_int('overlay-position-x');
+        const savedY = this._settings.get_int('overlay-position-y');
+
+        if (savedX !== POSITION_UNSET && savedY !== POSITION_UNSET) {
+            this._container.set_position(savedX, savedY);
+            return;
+        }
+
+        const monitor = Main.layoutManager.primaryMonitor;
+        const x = monitor.x + monitor.width - this._container.width - MARGIN_FROM_EDGE;
+        const y = monitor.y + MARGIN_FROM_EDGE;
+        this._container.set_position(x, y);
+    }
+
+    _setupDragging() {
+        let dragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let actorStartX = 0;
+        let actorStartY = 0;
+
+        this._container.connect('button-press-event', (actor, event) => {
+            dragging = true;
+            [dragStartX, dragStartY] = event.get_coords();
+            [actorStartX, actorStartY] = actor.get_position();
+            return Clutter.EVENT_STOP;
+        });
+
+        this._container.connect('motion-event', (actor, event) => {
+            if (!dragging)
+                return Clutter.EVENT_PROPAGATE;
+            const [x, y] = event.get_coords();
+            actor.set_position(
+                actorStartX + (x - dragStartX),
+                actorStartY + (y - dragStartY),
+            );
+            return Clutter.EVENT_STOP;
+        });
+
+        this._container.connect('button-release-event', (actor) => {
+            if (dragging) {
+                dragging = false;
+                const [x, y] = actor.get_position();
+                this._settings.set_int('overlay-position-x', x);
+                this._settings.set_int('overlay-position-y', y);
+            }
+            return Clutter.EVENT_STOP;
+        });
+    }
+
+    /**
+     * Replace the displayed notes. Does not change visibility —
+     * callers decide when to show()/hide() separately.
+     */
+    render(notes) {
+        this._container.destroy_all_children();
+
+        if (notes.length === 0) {
+            const emptyLabel = new St.Label({
+                style_class: 'pulse-note-text',
+                text: 'No notes yet.',
+            });
+            this._container.add_child(emptyLabel);
+        } else {
+            for (const note of notes)
+                this._container.add_child(buildNoteRow(note));
+        }
+    }
+
+    /**
+     * Connect a callback to clicks on the overlay itself (used by
+     * extension.js to dismiss a manually-shown overlay on click).
+     * Returns a handler id for disconnectClick().
+     */
+    onClick(callback) {
+        return this._container.connect('button-press-event', () => {
+            callback();
+            return Clutter.EVENT_STOP;
+        });
+    }
+
+    disconnectClick(handlerId) {
+        this._container.disconnect(handlerId);
+    }
+
+    get isVisible() {
+        return this._container.visible;
+    }
+
+    show() {
+        this._container.show();
+        this._container.opacity = 0;
+        this._container.ease({
+            opacity: 255,
+            duration: FADE_DURATION_MS,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        });
+    }
+
+    /** Fade out, then hide (so it stops taking input once invisible). */
+    hide() {
+        this._container.ease({
+            opacity: 0,
+            duration: FADE_DURATION_MS,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            onComplete: () => this._container.hide(),
+        });
+    }
+
+    destroy() {
+        Main.layoutManager.removeChrome(this._container);
+        this._container.destroy();
+        this._container = null;
+    }
+}
