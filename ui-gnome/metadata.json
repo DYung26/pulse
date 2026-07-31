@@ -1,0 +1,8 @@
+{
+  "uuid": "pulse@example.com",
+  "name": "Pulse",
+  "description": "Minimal overlay for ambient notes and status tracking.",
+  "shell-version": ["50"],
+  "url": "https://github.com/dyung/pulse",
+  "settings-schema": "org.gnome.shell.extensions.pulse"
+}
