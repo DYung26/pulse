@@ -5,13 +5,20 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     padding: 10px 14px;
-    spacing: 8px;
     max-width: 320px;
 }
 
-.pulse-note-row {
+.pulse-scroll-view {
+    max-width: 320px;
+}
+
+.pulse-note-list {
     spacing: 2px;
-    padding: 6px 0;
+}
+
+.pulse-note-row {
+    spacing: 1px;
+    padding: 2px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 

@@ -16,6 +16,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 const MARGIN_FROM_EDGE = 12;
 const FADE_DURATION_MS = 250;
 const POSITION_UNSET = -1;
+const MAX_OVERLAY_HEIGHT = 400;
 
 /**
  * Format a Note's `updated_at` (ISO 8601 string from the daemon) as a
@@ -83,6 +84,10 @@ export class PulseOverlay {
     constructor(settings) {
         this._settings = settings;
 
+        // _container is the outer frame: fixed max height, chrome-
+        // registered, draggable, click-handled. _noteList is the inner
+        // actor that actually grows with content; _scrollView clips it
+        // to _container's height and adds scrolling once it overflows.
         this._container = new St.BoxLayout({
             style_class: 'pulse-overlay',
             vertical: true,
@@ -91,6 +96,26 @@ export class PulseOverlay {
             track_hover: true,
         });
         this._container.hide();
+
+        this._scrollView = new St.ScrollView({
+            style_class: 'pulse-scroll-view',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
+        });
+        // No fixed height set here — render() decides per-update
+        // whether the content fits under MAX_OVERLAY_HEIGHT and only
+        // clamps the height when it actually overflows, so a short
+        // note list stays compact instead of always reserving the cap.
+
+        this._noteList = new St.BoxLayout({
+            style_class: 'pulse-note-list',
+            vertical: true,
+            x_expand: true,
+        });
+
+        this._scrollView.add_child(this._noteList);
+        this._container.add_child(this._scrollView);
 
         // Note: affectsInputRegion is a real Mutter param historically,
         // but this GJS/GNOME version rejects it as unrecognized — drop
@@ -172,18 +197,40 @@ export class PulseOverlay {
      * callers decide when to show()/hide() separately.
      */
     render(notes) {
-        this._container.destroy_all_children();
+        this._noteList.destroy_all_children();
 
         if (notes.length === 0) {
             const emptyLabel = new St.Label({
                 style_class: 'pulse-note-text',
                 text: 'No notes yet.',
             });
-            this._container.add_child(emptyLabel);
+            this._noteList.add_child(emptyLabel);
         } else {
             for (const note of notes)
-                this._container.add_child(buildNoteRow(note));
+                this._noteList.add_child(buildNoteRow(note));
         }
+
+        this._clampHeightToContent();
+    }
+
+    /**
+     * Only fix the scroll view's height (enabling scrolling) once the
+     * note list's natural height actually exceeds the cap. Below the
+     * cap, leave the height unset so the overlay shrinks to fit a
+     * short list instead of always reserving MAX_OVERLAY_HEIGHT of
+     * mostly-empty space.
+     */
+    _clampHeightToContent() {
+        // get_preferred_height needs a width to lay out against; use
+        // the note list's current width, falling back to a first-pass
+        // default before any real allocation has happened yet.
+        const forWidth = this._noteList.width > 0 ? this._noteList.width : -1;
+        const [, naturalHeight] = this._noteList.get_preferred_height(forWidth);
+
+        if (naturalHeight > MAX_OVERLAY_HEIGHT)
+            this._scrollView.set_height(MAX_OVERLAY_HEIGHT);
+        else
+            this._scrollView.set_height(-1); // -1 = unset, size to content
     }
 
     /**
