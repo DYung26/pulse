@@ -26,7 +26,10 @@ export default class PulseExtension extends Extension {
         console.log(`[pulse] enabled (${this.metadata.name} ${this.metadata.uuid})`);
 
         this._settings = this.getSettings();
-        this._overlay = new PulseOverlay(this._settings);
+        this._overlay = new PulseOverlay(this._settings, {
+            onAddNote: (text, properties) => this._addNote(text, properties),
+            onUpdateNote: (id, text, properties) => this._updateNote(id, text, properties),
+        });
         this._manuallyShown = false;
         this._autoFadeTimeoutId = null;
         this._periodicTimeoutId = null;
@@ -166,6 +169,41 @@ export default class PulseExtension extends Extension {
             GLib.source_remove(this._autoFadeTimeoutId);
             this._autoFadeTimeoutId = null;
         }
+    }
+
+    async _addNote(text, properties) {
+        try {
+            const response = await PulseClient.send({action: 'add_note', text, properties});
+            if (!response.ok) {
+                console.log(`[pulse] daemon rejected add_note: ${response.error}`);
+                return;
+            }
+        } catch (error) {
+            console.log(`[pulse] could not reach daemon: ${error.message}`);
+            return;
+        }
+        await this._refreshOverlay();
+    }
+
+    async _updateNote(id, text, properties) {
+        try {
+            const response = await PulseClient.send({action: 'update_note', id, text, properties});
+            if (!response.ok) {
+                console.log(`[pulse] daemon rejected update_note: ${response.error}`);
+                return;
+            }
+        } catch (error) {
+            console.log(`[pulse] could not reach daemon: ${error.message}`);
+            return;
+        }
+        await this._refreshOverlay();
+    }
+
+    async _refreshOverlay() {
+        const notes = await this._fetchNotes();
+        if (notes === null)
+            return;
+        this._overlay.render(notes);
     }
 
     /** Returns the note array, or null if the daemon couldn't be reached. */
