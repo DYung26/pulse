@@ -202,8 +202,14 @@ export class PulseOverlay {
             style_class: 'pulse-add-button',
             label: '+ Add note',
             x_expand: true,
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
         });
-        this._addButton.connect('clicked', () => this.enterAddMode());
+        this._addButton.connect('clicked', () => {
+            console.log('[pulse] add button clicked');
+            this.enterAddMode();
+        });
         this._container.add_child(this._addButton);
 
         // Note: affectsInputRegion is a real Mutter param historically,
@@ -254,6 +260,12 @@ export class PulseOverlay {
         let actorStartY = 0;
 
         this._container.connect('button-press-event', (actor, event) => {
+            console.log(`[pulse] container press, source=${event.get_source()}, addButton=${this._addButton}`);
+            if (this._isFormOpen())
+                return Clutter.EVENT_PROPAGATE;
+            if (event.get_source() === this._addButton)
+                return Clutter.EVENT_PROPAGATE;
+
             dragging = true;
             [dragStartX, dragStartY] = event.get_coords();
             [actorStartX, actorStartY] = actor.get_position();
