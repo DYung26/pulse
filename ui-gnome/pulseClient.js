@@ -15,6 +15,17 @@ Gio._promisify(Gio.OutputStream.prototype, 'write_bytes_async', 'write_bytes_fin
 Gio._promisify(Gio.DataInputStream.prototype, 'read_line_async', 'read_line_finish_utf8');
 
 function socketPath() {
+    // Mirrors core/src/socket.rs::default_socket_path() — keep these in
+    // sync by hand, since a GJS extension can't share code with the
+    // Rust crate. $PULSE_SOCKET_PATH lets the daemon's socket live
+    // somewhere other than $XDG_RUNTIME_DIR (e.g. a path shared into a
+    // Docker container for other clients), and every client — this
+    // one included — needs to check it first to find the same socket.
+    const override = GLib.getenv('PULSE_SOCKET_PATH');
+    if (override) {
+        return override;
+    }
+
     const runtimeDir = GLib.getenv('XDG_RUNTIME_DIR') ?? GLib.get_tmp_dir();
     return GLib.build_filenamev([runtimeDir, 'pulse.sock']);
 }

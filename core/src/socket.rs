@@ -4,6 +4,7 @@
 //! connection.
 
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,9 +16,21 @@ use crate::config::Config;
 use crate::protocol::{Request, Response, ResponseData};
 use crate::store::{Store, StoreError};
 
-/// `$XDG_RUNTIME_DIR/pulse.sock`, falling back to a temp-dir path if
-/// `XDG_RUNTIME_DIR` isn't set (unusual, but shouldn't crash startup).
+/// `$PULSE_SOCKET_PATH` if set (e.g. for daemon/client pairs split
+/// across a container boundary, where `$XDG_RUNTIME_DIR` isn't a
+/// shared filesystem location); otherwise `$XDG_RUNTIME_DIR/pulse.sock`,
+/// falling back to a temp-dir path if `XDG_RUNTIME_DIR` isn't set
+/// either (unusual, but shouldn't crash startup).
+///
+/// Both the daemon (main.rs) and every client (client.rs, and so
+/// pulse-mcp) call this same function, so setting the override once
+/// keeps them pointed at the same socket without needing to thread a
+/// path through both binaries separately.
 pub fn default_socket_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("PULSE_SOCKET_PATH") {
+        return PathBuf::from(path);
+    }
+
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
@@ -30,11 +43,34 @@ pub fn default_socket_path() -> PathBuf {
 /// instance is actually still running and holding the socket, this
 /// will fail loudly (bind error) rather than silently stealing it —
 /// see the "two daemons at once" hardening checklist item.
+///
+/// Creates the socket's parent directory if it doesn't exist yet.
+/// `$XDG_RUNTIME_DIR` is guaranteed to already exist (it's a
+/// login-session tmpfs managed by the OS/systemd), but a
+/// `$PULSE_SOCKET_PATH` override can point anywhere — e.g. a fresh
+/// `~/.local/run/` that's never been created — and `UnixListener::bind`
+/// does not create missing parent directories on its own.
 pub fn listen(path: &Path) -> std::io::Result<UnixListener> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     if path.exists() {
         std::fs::remove_file(path)?;
     }
-    UnixListener::bind(path)
+    let listener = UnixListener::bind(path)?;
+    // `bind()` creates the socket file honoring the process umask like
+    // any other file creation syscall, so under a default umask
+    // (typically 022) the socket ends up mode 644 — no write bit for
+    // group/other. A Unix socket's `connect()` requires write
+    // permission on the socket node, so any peer outside the owning
+    // UID/GID (e.g. a different UID inside a container that has the
+    // parent directory bind-mounted in) gets a permission-denied error
+    // at connect time even though the path is fully reachable. Relying
+    // on the caller's umask being permissive enough is fragile and
+    // non-obvious from the failure mode, so set it explicitly here.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777))?;
+    Ok(listener)
 }
 
 /// Shared daemon state a connection handler needs access to.
