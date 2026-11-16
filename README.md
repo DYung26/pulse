@@ -136,3 +136,10 @@ All three must point at the exact same path, and that path must be
 readable/writable by whichever user each process runs as (the daemon's
 user on the host; for the container, this works because `/home/dyung` is
 already bind-mounted in — see `metamcp`'s `docker-compose.yml`).
+
+The daemon creates the socket with mode `0660` (owner and group read/write,
+no access for other local users). If a container process runs under a
+different UID, give it a supplementary group matching the daemon's GID and
+make the socket's parent directory group-traversable. For example, the
+MetaMCP container runs with supplementary GID `1000`, matching the `dyung`
+group on the VPS.

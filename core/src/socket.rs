@@ -59,17 +59,12 @@ pub fn listen(path: &Path) -> std::io::Result<UnixListener> {
         std::fs::remove_file(path)?;
     }
     let listener = UnixListener::bind(path)?;
-    // `bind()` creates the socket file honoring the process umask like
-    // any other file creation syscall, so under a default umask
-    // (typically 022) the socket ends up mode 644 — no write bit for
-    // group/other. A Unix socket's `connect()` requires write
-    // permission on the socket node, so any peer outside the owning
-    // UID/GID (e.g. a different UID inside a container that has the
-    // parent directory bind-mounted in) gets a permission-denied error
-    // at connect time even though the path is fully reachable. Relying
-    // on the caller's umask being permissive enough is fragile and
-    // non-obvious from the failure mode, so set it explicitly here.
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777))?;
+    // The daemon and its clients may run under different UIDs when a
+    // client is inside a bind-mounted container. Keep the socket
+    // accessible to the owning user and group, but not to every local
+    // account. The daemon's parent directory must be group-accessible
+    // and the container process must share the daemon's group.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))?;
     Ok(listener)
 }
 
@@ -89,7 +84,11 @@ pub struct DaemonState<B: Backend> {
 /// response is sent (see store.rs), so there's no write buffer to
 /// flush here — shutdown just needs to stop accepting and remove the
 /// socket file so a restart doesn't need the stale-socket workaround.
-pub fn run<B: Backend>(listener: UnixListener, state: Arc<DaemonState<B>>, shutdown: Arc<AtomicBool>) {
+pub fn run<B: Backend>(
+    listener: UnixListener,
+    state: Arc<DaemonState<B>>,
+    shutdown: Arc<AtomicBool>,
+) {
     listener
         .set_nonblocking(true)
         .expect("failed to set listener non-blocking");
@@ -234,4 +233,29 @@ fn dispatch<B: Backend>(line: &str, state: &Arc<DaemonState<B>>) -> Response {
 
 fn store_error_message(e: &StoreError) -> String {
     e.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn socket_is_group_accessible_but_not_world_accessible() {
+        let path = std::env::temp_dir().join(format!(
+            "pulse-socket-permissions-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let listener = listen(&path).expect("bind test socket");
+        let mode = std::fs::metadata(&path)
+            .expect("read socket metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        drop(listener);
+        std::fs::remove_file(&path).expect("remove test socket");
+
+        assert_eq!(mode, 0o660);
+    }
 }
